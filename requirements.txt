@@ -1,0 +1,17 @@
+langchain
+langchain-groq
+langgraph
+pandas
+numpy
+scikit-learn
+matplotlib
+seaborn
+plotly
+streamlit
+python-dotenv
+ydata-profiling
+shap
+mlflow
+joblib
+groq
+Pillow
