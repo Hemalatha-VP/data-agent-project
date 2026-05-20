@@ -118,12 +118,22 @@ section[data-testid="stSidebar"] > div {
 """, unsafe_allow_html=True)
 
 
+def get_groq_key():
+    try:
+        return st.secrets["GROQ_API_KEY"]
+    except:
+        from dotenv import load_dotenv
+        from pathlib import Path
+        load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+        return os.getenv("GROQ_API_KEY")
+
+
 # ═══════════════════════════════════════════════════════
 # SIDEBAR
 # ═══════════════════════════════════════════════════════
 with st.sidebar:
     st.markdown("## 🤖 DataAgent AI")
-    st.caption("Autonomous Data Analysis — MSc Research Project")
+    st.caption("Autonomous Data Analysis")
     st.divider()
 
     st.markdown('<span class="step-badge">1</span> **Upload your CSV file**', unsafe_allow_html=True)
@@ -161,6 +171,9 @@ with st.sidebar:
     else:
         run_button = False
         target_col = None
+        # Clear saved results when file is removed
+        for k in ["agent_results", "agent_log", "agent_df", "agent_target"]:
+            st.session_state.pop(k, None)
         st.info("👈 Upload a CSV file above to get started.")
         st.markdown("""
 **Recommended datasets (free on Kaggle):**
@@ -174,7 +187,7 @@ with st.sidebar:
 # ═══════════════════════════════════════════════════════
 # WELCOME SCREEN
 # ═══════════════════════════════════════════════════════
-if not uploaded_file:
+if not uploaded_file and "agent_results" not in st.session_state:
     st.markdown("# 🤖 Autonomous Data Analysis Agent")
     st.markdown("Upload any CSV dataset and this AI agent will automatically clean it, analyse it, build the best ML model, explain its decisions, and write a business report — **with zero manual steps.**")
     st.divider()
@@ -213,7 +226,7 @@ report with insights and recommendations.
 
 
 # ═══════════════════════════════════════════════════════
-# MAIN ANALYSIS
+# RUN ANALYSIS — store results in session_state
 # ═══════════════════════════════════════════════════════
 if uploaded_file and run_button:
     df = pd.read_csv(uploaded_file)
@@ -247,15 +260,6 @@ if uploaded_file and run_button:
         html += '</div>'
         log_placeholder.markdown(html, unsafe_allow_html=True)
 
-    def get_groq_key():
-        try:
-            return st.secrets["GROQ_API_KEY"]
-        except:
-            from dotenv import load_dotenv
-            from pathlib import Path
-            load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-            return os.getenv("GROQ_API_KEY")
-
     with st.spinner("Agent is running all 6 stages..."):
         status_msg.info("⟳ Starting agent pipeline — please wait...")
         progress_bar.progress(10)
@@ -266,255 +270,266 @@ if uploaded_file and run_button:
             status_msg.success("✅ All 6 stages complete! Scroll down to see results.")
             render_log(full_log)
 
-            model_results = results.get("model_results", {})
-            all_scores    = model_results.get("all_scores", {})
-            task          = model_results.get("task", "classification")
-            best_name     = model_results.get("best_model_name", "N/A")
-            charts        = results.get("charts", [])
-            anomaly       = results.get("anomaly_results", {})
-            shap_charts   = results.get("shap_charts", {})
+            # ── SAVE TO SESSION STATE ──
+            st.session_state["agent_results"] = results
+            st.session_state["agent_log"]     = full_log
+            st.session_state["agent_df"]      = df
+            st.session_state["agent_target"]  = target_col
 
-            if task == "classification":
-                best_score_val = str(all_scores.get(best_name, {}).get("accuracy", "N/A")) + "%"
-            else:
-                best_score_val = "R²=" + str(all_scores.get(best_name, {}).get("r2", "N/A"))
+        except Exception as e:
+            progress_bar.progress(0)
+            status_msg.error(f"❌ Error: {str(e)}")
+            st.markdown(f'<div class="err-box"><strong>Error details:</strong> {str(e)}<br><br>Common fixes:<br>• Make sure the target column exists in your CSV<br>• Check your Groq API key<br>• Make sure your venv is active</div>', unsafe_allow_html=True)
 
-            anom_total = anomaly.get("total_anomalies", 0)
-            anom_pct   = anomaly.get("anomaly_percent", 0)
 
-            with col_main:
-                st.markdown(f"""
-                <div class="kpi-grid">
-                  <div class="kpi-card">
-                    <div class="kpi-val">{df.shape[0]:,}</div>
-                    <div class="kpi-label">Rows analysed</div>
-                    <div class="kpi-sub">{df.shape[1]} columns</div>
-                  </div>
-                  <div class="kpi-card">
-                    <div class="kpi-val">{best_score_val}</div>
-                    <div class="kpi-label">Best model score</div>
-                    <div class="kpi-sub">{best_name.split()[0] if best_name != "N/A" else "—"}</div>
-                  </div>
-                  <div class="kpi-card">
-                    <div class="kpi-val">{anom_total:,}</div>
-                    <div class="kpi-label">Anomalies flagged</div>
-                    <div class="kpi-sub">{anom_pct}% of data</div>
-                  </div>
-                  <div class="kpi-card">
-                    <div class="kpi-val">{len(charts)}</div>
-                    <div class="kpi-label">Charts generated</div>
-                    <div class="kpi-sub">Auto-created</div>
-                  </div>
-                </div>
-                """, unsafe_allow_html=True)
+# ═══════════════════════════════════════════════════════
+# DISPLAY RESULTS — from session_state (survives reruns)
+# ═══════════════════════════════════════════════════════
+if "agent_results" in st.session_state:
+    results    = st.session_state["agent_results"]
+    full_log   = st.session_state["agent_log"]
+    df         = st.session_state["agent_df"]
+    target_col = st.session_state["agent_target"]
 
-                tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-                    "📈 EDA Charts",
-                    "🔍 Anomaly Detection",
-                    "🤖 ML Models",
-                    "🧠 SHAP Explainability",
-                    "📝 Business Report",
-                    "💬 Chat with Data"
-                ])
+    model_results = results.get("model_results", {})
+    all_scores    = model_results.get("all_scores", {})
+    task          = model_results.get("task", "classification")
+    best_name     = model_results.get("best_model_name", "N/A")
+    charts        = results.get("charts", [])
+    anomaly       = results.get("anomaly_results", {})
+    shap_charts   = results.get("shap_charts", {})
 
-                # ── TAB 1: EDA ──────────────────────────────
-                with tab1:
-                    st.markdown("### Exploratory Data Analysis")
-                    st.markdown("The agent automatically generated these charts to help you understand the shape, distribution and relationships inside your dataset.")
+    if task == "classification":
+        best_score_val = str(all_scores.get(best_name, {}).get("accuracy", "N/A")) + "%"
+    else:
+        best_score_val = "R²=" + str(all_scores.get(best_name, {}).get("r2", "N/A"))
 
-                    hints = {
-                        "correlation": "**What this shows:** How strongly each pair of columns relates. Values close to +1 = strong positive link. Values close to -1 = strong negative link. Values near 0 = no relationship.",
-                        "histogram":   "**What this shows:** The distribution of values in each column. A tall bar in the middle = most values are average. A skewed shape = values cluster at one end.",
-                        "box":         "**What this shows:** The spread and outliers of each column. The box = the middle 50% of data. The line inside = the median. Dots beyond the whiskers = outliers.",
-                        "bar":         "**What this shows:** How often each category appears. The taller the bar, the more records have that value."
-                    }
+    anom_total = anomaly.get("total_anomalies", 0)
+    anom_pct   = anomaly.get("anomaly_percent", 0)
 
-                    useful_charts = [(n, p) for n, p in charts
-                                     if "customerid" not in n.lower()
-                                     and os.path.exists(p)]
+    st.markdown(f"""
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-val">{df.shape[0]:,}</div>
+        <div class="kpi-label">Rows analysed</div>
+        <div class="kpi-sub">{df.shape[1]} columns</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">{best_score_val}</div>
+        <div class="kpi-label">Best model score</div>
+        <div class="kpi-sub">{best_name.split()[0] if best_name != "N/A" else "—"}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">{anom_total:,}</div>
+        <div class="kpi-label">Anomalies flagged</div>
+        <div class="kpi-sub">{anom_pct}% of data</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">{len(charts)}</div>
+        <div class="kpi-label">Charts generated</div>
+        <div class="kpi-sub">Auto-created</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-                    if not useful_charts:
-                        st.warning("No charts were generated. Check that your dataset has numeric columns.")
-                    else:
-                        for name, path in useful_charts:
-                            st.markdown(f"#### {name}")
-                            for k, hint in hints.items():
-                                if k in name.lower():
-                                    st.markdown(f'<div class="tip-box">{hint}</div>', unsafe_allow_html=True)
-                            st.image(Image.open(path), use_column_width=True)
-                            st.divider()
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "📈 EDA Charts",
+        "🔍 Anomaly Detection",
+        "🤖 ML Models",
+        "🧠 SHAP Explainability",
+        "📝 Business Report",
+        "💬 Chat with Data"
+    ])
 
-                # ── TAB 2: ANOMALIES ────────────────────────
-                with tab2:
-                    st.markdown("### Anomaly Detection")
-                    st.markdown("The agent used **Isolation Forest** to scan your dataset for unusual records — rows that look very different from the rest. These could be data entry errors, rare edge cases, or genuinely suspicious records.")
+    # ── TAB 1: EDA ──────────────────────────────
+    with tab1:
+        st.markdown("### Exploratory Data Analysis")
+        st.markdown("The agent automatically generated these charts to help you understand the shape, distribution and relationships inside your dataset.")
 
-                    a1, a2, a3 = st.columns(3)
-                    a1.metric("Anomalies Found", anom_total)
-                    a2.metric("% of Dataset", f"{anom_pct}%")
-                    a3.metric("Normal Records", df.shape[0] - anom_total)
+        hints = {
+            "correlation": "**What this shows:** How strongly each pair of columns relates. Values close to +1 = strong positive link. Values close to -1 = strong negative link. Values near 0 = no relationship.",
+            "histogram":   "**What this shows:** The distribution of values in each column. A tall bar in the middle = most values are average. A skewed shape = values cluster at one end.",
+            "box":         "**What this shows:** The spread and outliers of each column. The box = the middle 50% of data. The line inside = the median. Dots beyond the whiskers = outliers.",
+            "bar":         "**What this shows:** How often each category appears. The taller the bar, the more records have that value."
+        }
 
-                    st.markdown(f'<div class="warn-box">⚠️ <strong>{anom_total} records</strong> ({anom_pct}% of your data) were flagged as anomalies.</div>', unsafe_allow_html=True)
+        useful_charts = [(n, p) for n, p in charts
+                         if "customerid" not in n.lower()
+                         and os.path.exists(p)]
 
-                    if "chart" in anomaly and os.path.exists(anomaly["chart"]):
-                        st.markdown("#### Anomaly Chart")
-                        st.markdown('<div class="tip-box"><strong>Left chart:</strong> Score distribution — red bars are anomalies, green are normal. <strong>Right chart:</strong> Scatter plot showing where anomalies sit in your data.</div>', unsafe_allow_html=True)
-                        st.image(Image.open(anomaly["chart"]), use_column_width=True)
+        if not useful_charts:
+            st.warning("No charts were generated. Check that your dataset has numeric columns.")
+        else:
+            for name, path in useful_charts:
+                st.markdown(f"#### {name}")
+                for k, hint in hints.items():
+                    if k in name.lower():
+                        st.markdown(f'<div class="tip-box">{hint}</div>', unsafe_allow_html=True)
+                st.image(Image.open(path), use_column_width=True)
+                st.divider()
 
-                    if "anomaly_df" in anomaly and not anomaly["anomaly_df"].empty:
-                        st.markdown("#### Sample Anomalous Records")
-                        st.markdown('<div class="warn-box">These are the actual rows flagged. Look for values that seem extreme or unusual.</div>', unsafe_allow_html=True)
-                        display_df = anomaly["anomaly_df"].drop(columns=["anomaly", "anomaly_score"], errors="ignore").head(10)
-                        st.dataframe(display_df, use_container_width=True)
+    # ── TAB 2: ANOMALIES ────────────────────────
+    with tab2:
+        st.markdown("### Anomaly Detection")
+        st.markdown("The agent used **Isolation Forest** to scan your dataset for unusual records — rows that look very different from the rest.")
 
-                # ── TAB 3: MODELS ───────────────────────────
-                with tab3:
-                    st.markdown("### Machine Learning Model Results")
-                    st.markdown(f"""
+        a1, a2, a3 = st.columns(3)
+        a1.metric("Anomalies Found", anom_total)
+        a2.metric("% of Dataset", f"{anom_pct}%")
+        a3.metric("Normal Records", df.shape[0] - anom_total)
+
+        st.markdown(f'<div class="warn-box">⚠️ <strong>{anom_total} records</strong> ({anom_pct}% of your data) were flagged as anomalies.</div>', unsafe_allow_html=True)
+
+        if "chart" in anomaly and os.path.exists(anomaly["chart"]):
+            st.markdown("#### Anomaly Chart")
+            st.markdown('<div class="tip-box"><strong>Left chart:</strong> Score distribution — red bars are anomalies, green are normal. <strong>Right chart:</strong> Scatter plot showing where anomalies sit in your data.</div>', unsafe_allow_html=True)
+            st.image(Image.open(anomaly["chart"]), use_column_width=True)
+
+        if "anomaly_df" in anomaly and not anomaly["anomaly_df"].empty:
+            st.markdown("#### Sample Anomalous Records")
+            st.markdown('<div class="warn-box">These are the actual rows flagged. Look for values that seem extreme or unusual.</div>', unsafe_allow_html=True)
+            display_df = anomaly["anomaly_df"].drop(columns=["anomaly", "anomaly_score"], errors="ignore").head(10)
+            st.dataframe(display_df, use_container_width=True)
+
+    # ── TAB 3: MODELS ───────────────────────────
+    with tab3:
+        st.markdown("### Machine Learning Model Results")
+        st.markdown(f"""
 The agent trained **4 different ML models** on your data and compared their performance.
 
 - **Task type detected:** {task.upper()}
 - **Target column:** `{target_col}` — this is what the model is predicting
 - **Best model:** {best_name}
-                    """)
+        """)
 
-                    st.markdown(f'<div class="ok-box">✅ Best model: <strong>{best_name}</strong> with score <strong>{best_score_val}</strong>. The model correctly predicted the outcome on test data it had never seen before.</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="ok-box">✅ Best model: <strong>{best_name}</strong> with score <strong>{best_score_val}</strong>.</div>', unsafe_allow_html=True)
 
-                    st.markdown("#### All Model Scores")
-                    for name, info in all_scores.items():
-                        is_best = (name == best_name)
-                        label = f"⭐ {name}  ← BEST" if is_best else name
-                        with st.expander(label, expanded=is_best):
-                            if task == "classification":
-                                c1, c2 = st.columns(2)
-                                c1.metric("Accuracy", f"{info['accuracy']}%", help="What % of test records the model predicted correctly.")
-                                c2.metric("F1 Score", f"{info['f1_score']}%", help="Balanced accuracy — useful when classes are imbalanced.")
-                                if is_best:
-                                    st.caption(f"The model got {info['accuracy']}% of its predictions right on unseen test data.")
-                            else:
-                                c1, c2, c3 = st.columns(3)
-                                c1.metric("RMSE", info["rmse"], help="Average prediction error. Lower is better.")
-                                c2.metric("R²", info["r2"], help="How much variation the model explains. 1.0 = perfect.")
-                                c3.metric("MAE", info["mae"], help="Average absolute difference between predicted and actual.")
+        st.markdown("#### All Model Scores")
+        for name, info in all_scores.items():
+            is_best = (name == best_name)
+            label = f"⭐ {name}  ← BEST" if is_best else name
+            with st.expander(label, expanded=is_best):
+                if task == "classification":
+                    c1, c2 = st.columns(2)
+                    c1.metric("Accuracy", f"{info['accuracy']}%")
+                    c2.metric("F1 Score", f"{info['f1_score']}%")
+                else:
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("RMSE", info["rmse"])
+                    c2.metric("R²", info["r2"])
+                    c3.metric("MAE", info["mae"])
 
-                    if "confusion_matrix" in model_results and os.path.exists(model_results["confusion_matrix"]):
-                        st.markdown("#### Confusion Matrix")
-                        st.markdown('<div class="tip-box"><strong>How to read this:</strong> Numbers on the diagonal = correct predictions. Off-diagonal = mistakes. Top-right = false positives. Bottom-left = false negatives.</div>', unsafe_allow_html=True)
-                        st.image(Image.open(model_results["confusion_matrix"]), use_column_width=True)
+        if "confusion_matrix" in model_results and os.path.exists(model_results["confusion_matrix"]):
+            st.markdown("#### Confusion Matrix")
+            st.markdown('<div class="tip-box"><strong>How to read this:</strong> Numbers on the diagonal = correct predictions. Off-diagonal = mistakes.</div>', unsafe_allow_html=True)
+            st.image(Image.open(model_results["confusion_matrix"]), use_column_width=True)
 
-                    if "feature_importance" in model_results and os.path.exists(model_results["feature_importance"]):
-                        st.markdown("#### Feature Importance Chart")
-                        st.markdown('<div class="tip-box"><strong>What this shows:</strong> Which columns mattered most when the model made predictions. Longer bar = more influence.</div>', unsafe_allow_html=True)
-                        st.image(Image.open(model_results["feature_importance"]), use_column_width=True)
+        if "feature_importance" in model_results and os.path.exists(model_results["feature_importance"]):
+            st.markdown("#### Feature Importance Chart")
+            st.image(Image.open(model_results["feature_importance"]), use_column_width=True)
 
-                # ── TAB 4: SHAP ─────────────────────────────
-                with tab4:
-                    st.markdown("### SHAP Explainability")
-                    st.markdown("SHAP (SHapley Additive exPlanations) explains **why** your model made each prediction. Regular feature importance tells you *which* columns matter. SHAP also tells you *in which direction* each column pushes the prediction.")
+    # ── TAB 4: SHAP ─────────────────────────────
+    with tab4:
+        st.markdown("### SHAP Explainability")
+        st.markdown("SHAP explains **why** your model made each prediction — not just which features matter, but in which direction they push the result.")
 
-                    if "shap_summary" in shap_charts and os.path.exists(shap_charts["shap_summary"]):
-                        st.markdown("#### SHAP Summary — Average Feature Impact")
-                        st.markdown('<div class="tip-box"><strong>How to read this:</strong> Longer bar = bigger average impact of that feature across all predictions. The top feature is the most important driver.</div>', unsafe_allow_html=True)
-                        st.image(Image.open(shap_charts["shap_summary"]), use_column_width=True)
+        if "shap_summary" in shap_charts and os.path.exists(shap_charts["shap_summary"]):
+            st.markdown("#### SHAP Summary — Average Feature Impact")
+            st.image(Image.open(shap_charts["shap_summary"]), use_column_width=True)
 
-                    if "shap_beeswarm" in shap_charts and os.path.exists(shap_charts["shap_beeswarm"]):
-                        st.markdown("#### SHAP Beeswarm — Direction of Impact")
-                        st.markdown('<div class="tip-box"><strong>How to read this:</strong> Each dot = one record. <strong>Red dots</strong> = high feature value. <strong>Blue dots</strong> = low value. Dots pushed <strong>right</strong> = increased the prediction. Dots pushed <strong>left</strong> = decreased it.</div>', unsafe_allow_html=True)
-                        st.image(Image.open(shap_charts["shap_beeswarm"]), use_column_width=True)
+        if "shap_beeswarm" in shap_charts and os.path.exists(shap_charts["shap_beeswarm"]):
+            st.markdown("#### SHAP Beeswarm — Direction of Impact")
+            st.markdown('<div class="tip-box">Each dot = one record. Red = high feature value. Blue = low value. Right = increased prediction. Left = decreased it.</div>', unsafe_allow_html=True)
+            st.image(Image.open(shap_charts["shap_beeswarm"]), use_column_width=True)
 
-                    top = shap_charts.get("top_shap_features", [])
-                    if top:
-                        st.markdown("#### Top SHAP Factors Ranked")
-                        st.caption("Higher impact score = stronger influence on the model's predictions.")
-                        for i, (feat, val) in enumerate(top, 1):
-                            col_a, col_b = st.columns([3, 1])
-                            with col_a:
-                                st.markdown(f"**{i}. {feat}**")
-                                st.progress(min(float(val) * 3, 1.0))
-                            with col_b:
-                                st.markdown(f"`{val}`")
+        top = shap_charts.get("top_shap_features", [])
+        if top:
+            st.markdown("#### Top SHAP Factors Ranked")
+            for i, (feat, val) in enumerate(top, 1):
+                col_a, col_b = st.columns([3, 1])
+                with col_a:
+                    st.markdown(f"**{i}. {feat}**")
+                    st.progress(min(float(val) * 3, 1.0))
+                with col_b:
+                    st.markdown(f"`{val}`")
 
-                    if not shap_charts or ("shap_summary" not in shap_charts and "shap_beeswarm" not in shap_charts):
-                        st.info("SHAP charts were not generated. This can happen with Logistic Regression.")
+    # ── TAB 5: REPORT ───────────────────────────
+    with tab5:
+        st.markdown("### AI-Generated Business Report")
+        st.markdown("Written by **Groq LLM (LLaMA 3)** based on all findings from the 6-stage pipeline.")
 
-                # ── TAB 5: REPORT ───────────────────────────
-                with tab5:
-                    st.markdown("### AI-Generated Business Report")
-                    st.markdown("The report below was written by **Groq LLM (LLaMA 3)** based on all findings from the 6-stage pipeline. Written in plain English for non-technical stakeholders.")
+        report = results.get("report_text", "")
+        if report:
+            st.markdown(report)
+            st.divider()
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                st.download_button(
+                    label="📥  Download Report (.txt)",
+                    data=report,
+                    file_name="business_report.txt",
+                    mime="text/plain",
+                    use_container_width=True
+                )
+            with col_d2:
+                log_txt = "\n".join([f"[{s.upper()}] {m}" for s, m in full_log])
+                st.download_button(
+                    label="📥  Download Activity Log (.txt)",
+                    data=log_txt,
+                    file_name="activity_log.txt",
+                    mime="text/plain",
+                    use_container_width=True
+                )
+        else:
+            st.warning("Report could not be generated. Check your Groq API key.")
 
-                    report = results.get("report_text", "")
-                    if report:
-                        st.markdown(report)
-                        st.divider()
-                        st.markdown("#### Download")
-                        col_d1, col_d2 = st.columns(2)
-                        with col_d1:
-                            st.download_button(
-                                label="📥  Download Report (.txt)",
-                                data=report,
-                                file_name="business_report.txt",
-                                mime="text/plain",
-                                use_container_width=True
-                            )
-                        with col_d2:
-                            log_txt = "\n".join([f"[{s.upper()}] {m}" for s, m in full_log])
-                            st.download_button(
-                                label="📥  Download Activity Log (.txt)",
-                                data=log_txt,
-                                file_name="activity_log.txt",
-                                mime="text/plain",
-                                use_container_width=True
-                            )
-                    else:
-                        st.warning("Report could not be generated. Check your Groq API key.")
+    # ── TAB 6: CHAT ─────────────────────────────
+    with tab6:
+        st.markdown("### 💬 Chat with Your Data")
+        st.markdown("""
+Ask plain English questions about your dataset. The AI answers using results from all 6 analysis stages.
 
-                # ── TAB 6: CHAT ─────────────────────────────
-                with tab6:
-                    st.markdown("### Chat with Your Data")
-                    st.markdown("""
-Ask plain English questions about your dataset. The AI will answer using the results from all 6 analysis stages.
-
-**Example questions to try:**
+**Example questions:**
 - *Which model performed best and why?*
 - *What were the most important features for predicting churn?*
 - *How many anomalies were found and what could cause them?*
 - *What business actions would you recommend?*
-                    """)
+        """)
 
-                    if "messages" not in st.session_state:
-                        st.session_state.messages = []
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
 
-                    for msg in st.session_state.messages:
-                        with st.chat_message(msg["role"]):
-                            st.markdown(msg["content"])
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
 
-                    if prompt := st.chat_input("Ask anything about your data..."):
-                        st.session_state.messages.append({"role": "user", "content": prompt})
-                        with st.chat_message("user"):
-                            st.markdown(prompt)
+        if prompt := st.chat_input("Ask anything about your data..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
 
-                        with st.chat_message("assistant"):
-                            try:
-                                from groq import Groq
+            with st.chat_message("assistant"):
+                try:
+                    from groq import Groq
 
-                                groq_key = get_groq_key()
+                    groq_key = get_groq_key()
 
-                                if not groq_key:
-                                    st.error("Groq API key not found. Check your .env file or Streamlit secrets.")
-                                else:
-                                    chat_client = Groq(api_key=groq_key)
+                    if not groq_key:
+                        st.error("Groq API key not found. Check your Streamlit secrets.")
+                    else:
+                        chat_client = Groq(api_key=groq_key)
 
-                                    top_feats = ""
-                                    top_shap = shap_charts.get("top_shap_features", [])
-                                    if top_shap:
-                                        top_feats = ", ".join([f[0] for f in top_shap[:3]])
+                        top_feats = ""
+                        top_shap = shap_charts.get("top_shap_features", [])
+                        if top_shap:
+                            top_feats = ", ".join([f[0] for f in top_shap[:3]])
 
-                                    scores_summary = ", ".join([
-                                        f"{n}: {v.get('accuracy', v.get('r2', '?'))}"
-                                        for n, v in all_scores.items()
-                                    ])
+                        scores_summary = ", ".join([
+                            f"{n}: {v.get('accuracy', v.get('r2', '?'))}"
+                            for n, v in all_scores.items()
+                        ])
 
-                                    context = f"""You are a helpful data analyst assistant.
+                        context = f"""You are a helpful data analyst assistant.
 Here is what the analysis found about this dataset:
 
 Dataset: {df.shape[0]:,} rows x {df.shape[1]} columns
@@ -528,23 +543,17 @@ Top features driving predictions: {top_feats if top_feats else "not available"}
 Answer the user's question clearly and helpfully in plain English.
 If asked something not in the analysis results, say so honestly."""
 
-                                    response = chat_client.chat.completions.create(
-                                        model="llama-3.3-70b-versatile",
-                                        messages=[
-                                            {"role": "system", "content": context},
-                                            *[{"role": m["role"], "content": m["content"]}
-                                              for m in st.session_state.messages]
-                                        ]
-                                    )
-                                    reply = response.choices[0].message.content
-                                    st.markdown(reply)
-                                    st.session_state.messages.append({"role": "assistant", "content": reply})
+                        response = chat_client.chat.completions.create(
+                            model="llama-3.3-70b-versatile",
+                            messages=[
+                                {"role": "system", "content": context},
+                                *[{"role": m["role"], "content": m["content"]}
+                                  for m in st.session_state.messages]
+                            ]
+                        )
+                        reply = response.choices[0].message.content
+                        st.markdown(reply)
+                        st.session_state.messages.append({"role": "assistant", "content": reply})
 
-                            except Exception as chat_err:
-                                st.error(f"Chat error: {str(chat_err)}")
-
-        except Exception as e:
-            progress_bar.progress(0)
-            status_msg.error(f"❌ Error: {str(e)}")
-            st.markdown(f'<div class="err-box"><strong>Error details:</strong> {str(e)}<br><br>Common fixes:<br>• Make sure the target column exists in your CSV<br>• Check your Groq API key<br>• Make sure your venv is active</div>', unsafe_allow_html=True)
-            render_log(full_log if "full_log" in locals() else [])
+                except Exception as chat_err:
+                    st.error(f"Chat error: {str(chat_err)}")
