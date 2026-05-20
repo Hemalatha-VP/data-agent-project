@@ -266,7 +266,7 @@ if uploaded_file and run_button:
 
         try:
             results, full_log = run_agent(df, target_col)
-            progress_bar.progress(100)
+            progress_bar.progress()
             status_msg.success("✅ All 6 stages complete! Scroll down to see results.")
             render_log(full_log)
 
