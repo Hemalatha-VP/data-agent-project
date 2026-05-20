@@ -143,7 +143,7 @@ section[data-testid="stSidebar"] > div {
 # ═══════════════════════════════════════════════════════
 with st.sidebar:
     st.markdown("## 🤖 DataAgent AI")
-    st.caption("Autonomous Data Analysis — MSc Research Project")
+    st.caption("Autonomous Data Analysis")
     st.divider()
 
     st.markdown('<span class="step-badge">1</span> **Upload your CSV file**', unsafe_allow_html=True)
